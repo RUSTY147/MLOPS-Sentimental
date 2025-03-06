@@ -1,0 +1,51 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up AWS CLI
+        run: |
+          sudo apt-get install -y awscli
+          # aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set default.region ap-south-1
+
+      - name: SSH into EC2 and Deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          EC2_HOST: "3.111.32.87"  # Updated Public IP
+          DOCKER_IMAGE: "rusty2000/sentimental-analysis:latest"
+        run: |
+          echo "$PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@$EC2_HOST << 'EOF'
+            sudo yum update -y
+            sudo yum install docker -y
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker ec2-user  # Ensure the user can run Docker without sudo
+            
+            # Remove old container if exists
+            docker stop sentiment-api || true
+            docker rm sentiment-api || true
+
+            # Remove old images to free space
+            docker image prune -a -f
+
+            # Pull the latest image
+            docker pull $DOCKER_IMAGE
+
+            # Run the container
+            docker run -d -p 8000:8000 --name sentiment-api $DOCKER_IMAGE
+          EOF
